@@ -1,0 +1,1 @@
+Maps or create midi events according to scales and chords
