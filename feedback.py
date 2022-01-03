@@ -55,7 +55,7 @@ class Feedback:
             to_chord = self.chans_map_settings[chan]["map_to_chord"]
         else:
             to_chord = True
-        sent_note = self.mood.map_note7(ori_note, to_chord)        
+        sent_note = self.mood.map_note(ori_note, to_chord)        
         return sent_note
     # ----
 
