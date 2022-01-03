@@ -39,7 +39,7 @@ def already_running():
 def still_locked():
     res = already_running()
     if (not res):
-        print("PY was unlocked by en external process")
+        print("PY was unlocked by an external process")
     return res
 
 def fl_ahk_running():

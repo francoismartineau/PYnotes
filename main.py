@@ -9,7 +9,7 @@ else:
     utils.lock_script()
     mi = midi.Midi()
     mo = mood.Mood(mi)
-    fe = feedback.Feedback(mi, mo)
+    fe = feedback.Feedback(mi, mo, midi.FL_TO_PY.FEEDBACK["chans"])
     mi.set_mood(mo)
     mi.set_feedback(fe)
 

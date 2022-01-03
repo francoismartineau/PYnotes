@@ -1,8 +1,8 @@
-#from pyo import *
 from dataclasses import dataclass
 import threading, time
 import rtmidi
 import rtmidi.midiutil
+# pip install python-rtmidi
 
 # 7e, 9e (avec velocité de chord)
 
@@ -30,9 +30,13 @@ class FL_TO_PY:
 
     """
     Chords:
-        chan 1      c3 ... b3       I ... vii`
+        chan 1      c3 ... b3
+        Vel 0: set chord len 1 2 3 4 5 6 7
+        Vel X: set chord number I ... vii`
     """
-    CHORDS = {"chan": 1, 36: 0, 38: 1, 40: 2, 41: 3, 43: 4, 45: 5, 47: 6}
+    CHORDS = {"chan": 1}
+    CHORDS["chord_num"] = {36: 0, 38: 1, 40: 2, 41: 3, 43: 4, 45: 5, 47: 6}
+    CHORDS["chord_len"] = {36: 1, 38: 2, 40: 3, 41: 4, 43: 5, 45: 6, 47: 7}
 
     """
     Tonic: any note on chan 2
@@ -44,9 +48,21 @@ class FL_TO_PY:
         chan 3              tick: 13/c1#         1st tick: 12/c1   
     """
     METRONOME = {"chan": 3, "tick_note": 13, "first_tick_note": 12}
-
+    
     FEEDBACK = {"chans": [10, 11, 12]}
-
+    """
+    FEEDBACK_SETTINGS:
+        Vel: 0, disable mapping for chan associated with note
+        Vel: 127, enable mapping for chan associated with note
+    """
+    FEEDBACK_SETTINGS = {"chan": 1, "notes": {}, "vels": {}}
+    FEEDBACK_SETTINGS["notes"][12] = {"setting": "map_to_chord", "chan": FEEDBACK["chans"][0]}   # C1
+    FEEDBACK_SETTINGS["notes"][13] = {"setting": "map_to_scale", "chan": FEEDBACK["chans"][0]}   # C1#
+    FEEDBACK_SETTINGS["notes"][14] = {"setting": "map_to_chord", "chan": FEEDBACK["chans"][1]}   # D1
+    FEEDBACK_SETTINGS["notes"][15] = {"setting": "map_to_scale", "chan": FEEDBACK["chans"][1]}   # D1#
+    FEEDBACK_SETTINGS["notes"][16] = {"setting": "map_to_chord", "chan": FEEDBACK["chans"][2]}   # E1
+    FEEDBACK_SETTINGS["notes"][17] = {"setting": "map_to_scale", "chan": FEEDBACK["chans"][2]}   # E1#
+    
 @dataclass
 class PY_TO_FL:
     MODE = {"all": 1, "notes": 2, "cc": 3, "none": 4}
@@ -68,7 +84,7 @@ class Midi:
         
         self.print_incoming_messages = False
         self.print_incoming_note_ons = False
-        self.print_outcoming_messages = True
+        self.print_outcoming_messages = False
         self.print_exec_funcs = True
         
         self.add_midi_input('FL_TO_PY')
@@ -130,11 +146,17 @@ class Midi:
         if Midi.is_mode_setter(note, chan):
             self.set_mode(note)
         elif Midi.is_chord_setter(note, chan):
-            self.set_chord(note)
+            if (vel > 0):
+                self.set_chord(note)
+            else:
+                self.set_chord_len(note)
         elif Midi.is_tonic_setter(chan):
             self.set_tonic(note)
         elif Midi.is_feedback(chan):
             self.feedback.on_note_on(note, vel, chan)
+        elif Midi. is_feedback_setting(note, chan):
+            self.apply_feedback_setting(note, vel)
+            pass
           
     def on_note_off(self, note, chan):
         if self.print_incoming_messages:
@@ -154,12 +176,14 @@ class Midi:
             print("chan: {}   cc: {}   val:{}".format(chan, cc, val))
 
     def on_ahk_func(self, cc, val):
-        {
+        funcs = {
             30: self.set_PY_TO_FL_OUTPUT_MODE,
-        }[cc](val)
-    # ----
+        }
+        if (cc in funcs):
+            funcs[cc](val)
+    # -----------------------------------------------------------------------------
 
-    # -- funcs ---------------
+    # -- funcs -------------------------------
     @staticmethod
     def is_tick(note, chan):
         return chan == FL_TO_PY.METRONOME["chan"] and note == FL_TO_PY.METRONOME["tick_note"]
@@ -177,10 +201,13 @@ class Midi:
 
     @staticmethod
     def is_chord_setter(note, chan):
-        return chan == FL_TO_PY.CHORDS["chan"] and note in FL_TO_PY.CHORDS.keys()
+        return chan == FL_TO_PY.CHORDS["chan"] and note in FL_TO_PY.CHORDS["chord_num"]
 
     def set_chord(self, note):
-        self.mood.set_chord(FL_TO_PY.CHORDS[note])
+        self.mood.set_chord(FL_TO_PY.CHORDS["chord_num"][note])
+
+    def set_chord_len(self, note):
+        self.mood.set_chord_len(FL_TO_PY.CHORDS["chord_len"][note])
 
     @staticmethod
     def is_tonic_setter(chan):
@@ -193,6 +220,22 @@ class Midi:
     def is_feedback(chan):
         return chan in FL_TO_PY.FEEDBACK["chans"]
 
+    @staticmethod
+    def is_feedback_setting(note, chan):
+        return chan == FL_TO_PY.FEEDBACK_SETTINGS["chan"] and note in FL_TO_PY.FEEDBACK_SETTINGS["notes"].keys()
+
+    def apply_feedback_setting(self, note, vel):
+        chan = FL_TO_PY.FEEDBACK_SETTINGS["notes"][note]["chan"]
+        if (vel == 0):
+            self.feedback.disable_map(chan)
+            return
+        if (vel == 127):
+            self.feedback.enable_map(chan)
+        setting = FL_TO_PY.FEEDBACK_SETTINGS["notes"][note]["setting"]
+        if setting.startswith("map_to"):
+            self.feedback.set_map_to(chan, setting)
+        
+    # ---
     @staticmethod
     def is_cc(status):
         return status>>4 == 0xB
@@ -213,7 +256,7 @@ class Midi:
         self.PY_TO_FL_OUTPUTE_MODE = val
         print("output mode: ", val)
         return          
-    # ----
+    # ----------------------------------------
 
     # -- OUTPUT ---------------------------------------------------------------------------
 
@@ -230,13 +273,24 @@ class Midi:
         self.call_ahk_func("displayTonic", tonic)
         return    
 
+    def display_chan_map_to(self, chan, map_to_chord):
+        self.call_ahk_func("displayChanMapTo", (chan<<1)+map_to_chord)
+
+    def display_chan_map_enable(self, chan, enable):
+        self.call_ahk_func("displayChanMapEnable", (chan<<1)+enable)
+
+    def display_chord_len(self, len):
+        self.call_ahk_func("displayChordLen", len)
+
     def call_ahk_func(self, func, val):
         status = Midi.get_cc_status(AHK.CHAN)
         cc = {
             "displayMode": 30,
             "displayChord": 31,
             "displayTonic": 32,
-            "": 33,
+            "displayChanMapTo": 33,
+            "displayChanMapEnable": 34,
+            "displayChordLen": 35,
         }[func]
         self.__send_midi_msg("PY_TO_AHK", [status, cc, val])
     # ----

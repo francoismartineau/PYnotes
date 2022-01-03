@@ -1,16 +1,19 @@
 class Feedback:
-    def __init__(self, midi, mood):
+    def __init__(self, midi, mood, chans):
         self.midi = midi
         self.mood = mood
-        self.curr_note_ons = []  #ex: [{"ori": 10, "sent": [12, 13]}]
-        ## liste des notes ons (ori note, sent notes en ordre)
-        ## si note off correspond à ori, envoyer first sent note et retirer de liste
-        ## si on retire le dernier sent note, on retire ce "note one"
-        pass
+        self.curr_note_ons = []
+        self.chans_map_settings = {}
+        for c in chans:
+            self.init_chan_map_setting(c)
     
     # -- receive ----
     def on_note_on(self, ori_note, vel, chan):
-        sent_note = self.mood.map_note(ori_note, False)
+        if self.chans_map_settings[chan]["active"]:
+            sent_note = self.map_note(ori_note, chan)
+        else:
+            sent_note = ori_note
+        
         self.send_note_on(ori_note, sent_note, vel, chan)
 
     def on_note_off(self, note, chan):
@@ -28,8 +31,36 @@ class Feedback:
             self.midi.send_note_off(sent_note, chan)
     # ----
 
+
+    # -- funcs --------------------------------------
+    def set_map_to(self, chan, map_to):
+        if chan not in self.chans_map_settings:
+            self.init_chan_map_setting(chan)
+        self.chans_map_settings[chan]["map_to_chord"] = map_to.endswith("chord")
+        self.midi.display_chan_map_to(chan, self.chans_map_settings[chan]["map_to_chord"])
+
+    def init_chan_map_setting(self, chan):
+        self.chans_map_settings[chan] = {"active": True}
+
+    def enable_map(self, chan):
+        self.chans_map_settings[chan]["active"] = True
+        self.midi.display_chan_map_enable(chan, self.chans_map_settings[chan]["active"])
+
+    def disable_map(self, chan):
+        self.chans_map_settings[chan]["active"] = False
+        self.midi.display_chan_map_enable(chan, self.chans_map_settings[chan]["active"])
+
+    def map_note(self, ori_note, chan):
+        if "map_to_chord" in self.chans_map_settings[chan]:
+            to_chord = self.chans_map_settings[chan]["map_to_chord"]
+        else:
+            to_chord = True
+        sent_note = self.mood.map_note7(ori_note, to_chord)        
+        return sent_note
+    # ----
+
     # -- curr_note_ons ------------------------------
-    ###### si output already on, send off just before new on
+    ###### si next outputed note is already on, send note off just before new on
     def add_curr_note_on(self, ori_note, chan, sent_note):
         index = self.get_curr_note_on_index(ori_note, chan)
         if (index is None):

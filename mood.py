@@ -10,7 +10,7 @@ class Mood:
     def __init__(self, midi):
         self.midi = midi
 
-        self.print_set_notes = True
+        self.print_set_notes = False
         self.print_notes = False
         self.print_ticks = False
 
@@ -45,40 +45,103 @@ class Mood:
         if self.print_set_notes:
             print("-- Tonic:", note)
 
+    def set_chord_len(self, len):
+        self.chord_len = len
+        self.midi.display_chord_len(self.chord_len)
+
     def get_current_mode_gaps(self):
         return Mood.major_scale[self.mode:] + Mood.major_scale[:self.mode]
     
     def get_current_mode_notes(self):
-        notes = [0]
-        for i in range(len(self.mode_gaps)):
-            notes.append(sum(self.mode_gaps[:i]))
+        notes = [sum(self.mode_gaps[:i]) for i in range(len(self.mode_gaps))]
         return notes
+    
+    def get_major_scale_notes(self):
+        notes = [sum(self.major_scale[:i]) for i in range(len(self.major_scale))]
+        return notes
+
+    def get_major_scale_tonic_chord_notes(self):
+        notes = []
+        major_scale_notes = self.get_major_scale_notes()
+        for scale_degree in [i*2 for i in range(self.chord_len)]:
+            n = major_scale_notes[scale_degree]
+            notes.append(n)
+        return notes
+    
+    def get_closest_degree_in_c_major_scale(self, note):
+        note_offset_from_c = Mood.get_note_offset_in_oct(note)
+        major_scale_notes = self.get_major_scale_notes()
+        closest_degree = min(range(len(major_scale_notes)), key = lambda i: abs(major_scale_notes[i]-note_offset_from_c))
+        st_delta = major_scale_notes[closest_degree]-note_offset_from_c
+        return closest_degree, st_delta
+    
+    def get_closest_degree_in_c_major_tonic_chord(self, note):
+        note_offset_from_c = Mood.get_note_offset_in_oct(note)
+        major_scale_tonic_chord_notes = self.get_major_scale_tonic_chord_notes()
+        major_scale_tonic_chord_notes += [12]                                       # so higher notes can be attracted by tonic
+        closest_degree = min(range(len(major_scale_tonic_chord_notes)), key = lambda i: abs(major_scale_tonic_chord_notes[i]-note_offset_from_c))
+        st_delta = major_scale_tonic_chord_notes[closest_degree]-note_offset_from_c
+        closest_degree = closest_degree % (len(major_scale_tonic_chord_notes)-1)    # so if higher note was attracted by tonic, res = 0 (meaning tonic)
+        return closest_degree, st_delta
+
+    def get_oct_relative_to_c5(self, note):
+        oct = (note-Mood.c5)//12
+        return oct
+    
     
     def get_current_chord_notes(self):
         curr_chord = []
-        for n in [i*2 for i in range(self.chord_len)]:  # 0, 2, 4, etc
-            n += self.chord                             # si nieme accord, n+0, n+2, n+4, etc
-            n %= 7                                      # wrap dans octave
-            n = sum(self.mode_gaps[:n])   # sum puisque liste d'écarts
-            curr_chord.append(n)
+        for scale_degree in [i*2 for i in range(self.chord_len)]:   # 0, 2, 4, 6, 8, 10, 12
+            scale_degree += self.chord                              # si nieme accord, n+0, n+2, n+4, etc
+            scale_degree %= 7                                       # wrap dans octave
+            #n_oct_up = scale_degree // len(self.mode_gaps)
+            #scale_degree %= 12
+            note = sum(self.mode_gaps[:scale_degree]) 
+            #note += n_oct_up*12
+            curr_chord.append(note)
+
         if self.print_notes:
             print(curr_chord)
         return curr_chord
 
     # -----------------------------------------
+    def map_c_major_note(self, note, to_chord):         
+        ### Force degrees of scale/chords OR let free to escape, but white notes are the scale
+        ### couleurs diffs pour ça
+        # map 1 to 7
+        get_degree = {
+            True: self.get_closest_degree_in_c_major_tonic_chord,
+            False: self.get_closest_degree_in_c_major_scale
+        }[to_chord]
+        degree, st_delta = get_degree(note)
+        #print(Mood.midi_to_readable_note(note, True))
+        notes = {
+            True: self.chord_notes,
+            False: self.mode_notes,
+        }[to_chord]
+
+
+        oct = self.get_oct_relative_to_c5(note) ###### Oct devrait, oui être déterminé par note initiale
+                                                ###### mais aussi par le wrap de degree
+        
+        tonic_offset = Mood.get_note_offset_in_oct(self.tonic) 
+        note = notes[degree] + Mood.c5 + oct*12 + tonic_offset
+        return note
+
     def map_note(self, note, to_chord):
         """
         to_chord: if False, map to scale
-        This function maps an incoming note to a close value in a cluster of notes.
+        This function maps an incoming note to a close value in a chord or scale.
         It checks up, then down, then up+1, down-1, etc. Until it finds a note from the cluster.
         The octave component of every notes is removed prior to verifications and put back at the end.
         """
         # SI PROCHE TONIQUE, y aller plus facilement?
-
-        tonic_offs = Mood.get_note_offset_in_oct(self.tonic)
         note_offs = Mood.get_note_offset_in_oct(note)
+        
         base_notes = {True: self.chord_notes, False: self.mode_notes}[to_chord]
+        tonic_offs = Mood.get_note_offset_in_oct(self.tonic)
         good_note_offs = list(map(lambda n: Mood.get_note_offset_in_oct(n+tonic_offs), base_notes))
+
         if (note_offs not in good_note_offs):
             delta_up = 0
             delta_down = 0
@@ -148,11 +211,18 @@ class Mood:
 
     # -----
 
+def f(note):
+    oct = (note-60)//12
+    return oct
 
 if __name__ == "__main__":
+    note = 40
+    print(f(note))
+    exit()
     m = Mood(None)
-    note = Mood.french_notes.index("Ré") + 12*3
-    note = m.map_note(note, True)
-    print(Mood.midi_to_readable_note(note))
+    note = Mood.french_notes.index("Si") + 12*3
+    note, delta = m.get_closest_degree_in_c_major_tonic_chord(note)
+    print(note, delta)
+    #print(Mood.midi_to_readable_note(note, True))
 
     pass
